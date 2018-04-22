@@ -22,7 +22,7 @@ namespace efk
 
 		void ReleaseTexture();
 
-		// コピー先のテクスチャを準備
+		// prepare a target to copy
 		void PrepareTexture(uint32_t width, uint32_t height, GLint internalFormat);
 
 		virtual bool OnDistorting() override;
@@ -618,15 +618,15 @@ namespace efk
 		manager2d->SetScale(handle, x, y, z);
 	}
 
-	bool EffectManager::Initialize(cocos2d::Size visibleSize)
+	bool EffectManager::Initialize(cocos2d::Size visibleSize, int maxSpriteCount)
 	{
 #if (CC_TARGET_PLATFORM == CC_PLATFORM_IOS || CC_TARGET_PLATFORM == CC_PLATFORM_ANDROID)
-		renderer2d = ::EffekseerRendererGL::Renderer::Create(2000, EffekseerRendererGL::OpenGLDeviceType::OpenGLES2);
+		renderer2d = ::EffekseerRendererGL::Renderer::Create(maxSpriteCount, EffekseerRendererGL::OpenGLDeviceType::OpenGLES2);
 #else
-		renderer2d = ::EffekseerRendererGL::Renderer::Create(2000, EffekseerRendererGL::OpenGLDeviceType::OpenGL2);
+		renderer2d = ::EffekseerRendererGL::Renderer::Create(maxSpriteCount, EffekseerRendererGL::OpenGLDeviceType::OpenGL2);
 #endif
 		
-		manager2d = ::Effekseer::Manager::Create(8000);
+		manager2d = ::Effekseer::Manager::Create(maxSpriteCount);
 
 		// set camera and projection matrix for 2d
 		// If you special camera or 3d, please set yourself with setCameraMatrix and setProjectionMatrix
@@ -650,10 +650,10 @@ namespace efk
 		return true;
 	}
 
-	EffectManager* EffectManager::create(cocos2d::Size visibleSize)
+	EffectManager* EffectManager::create(cocos2d::Size visibleSize, int maxSpriteCount)
 	{
 		auto ret = new EffectManager();
-		if (ret->Initialize(visibleSize))
+		if (ret->Initialize(visibleSize, maxSpriteCount))
 		{
 			return ret;
 		}

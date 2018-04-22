@@ -260,7 +260,7 @@ namespace efk
 
 		void setScale(::Effekseer::Handle handle, float x, float y, float z);
 
-		bool Initialize(cocos2d::Size visibleSize);
+		bool Initialize(cocos2d::Size visibleSize, int maxSpriteCount);
 	public:
 
 		/**
@@ -272,7 +272,7 @@ namespace efk
 			\~English	Instance
 			\~Japanese	インスタンス
 		*/
-		static EffectManager* create(cocos2d::Size visibleSize);
+		static EffectManager* create(cocos2d::Size visibleSize, int maxSpriteCount = 4000);
 
 		/**
 			@brief
