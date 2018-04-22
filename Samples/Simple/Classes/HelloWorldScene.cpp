@@ -36,7 +36,7 @@ bool HelloWorld::init()
 
 		您创建一个efk::EffectManager的实例。
 	*/
-	manager = efk::EffectManager::create(rsize);
+	manager = efk::EffectManager::create(rsize, 4000);
 
     return true;
 }
