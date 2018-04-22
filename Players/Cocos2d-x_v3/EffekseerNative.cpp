@@ -5439,17 +5439,16 @@ struct ParameterTranslationPVA
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
+enum class LocationAbsType : int32_t
+{
+	None = 0,
+	Gravity = 1,
+	AttractiveForce = 2,
+};
+
 struct LocationAbsParameter
 {
-	enum
-	{
-		None = 0,
-		Gravity = 1,
-		AttractiveForce = 2,
-		
-		//UniformlyAttractiveForce = 3,
-		Parameter_DWORD = 0x7fffffff,
-	} type;
+	LocationAbsType type = LocationAbsType::None;
 
 	union
 	{
@@ -9200,7 +9199,7 @@ void EffectNodeImplemented::LoadParameter(unsigned char*& pos, EffectNode* paren
 	if( node_type == -1 )
 	{
 		TranslationType = ParameterTranslationType_None;
-		LocationAbs.type = LocationAbsParameter::None;
+		LocationAbs.type = LocationAbsType::None;
 		RotationType = ParameterRotationType_None;
 		ScalingType = ParameterScalingType_None;
 		CommonValues.MaxGeneration = 1;
@@ -9343,7 +9342,7 @@ void EffectNodeImplemented::LoadParameter(unsigned char*& pos, EffectNode* paren
 		pos += sizeof(int);
 
 		// Calc attraction forces
-		if( LocationAbs.type == LocationAbsParameter::None )
+		if( LocationAbs.type == LocationAbsType::None )
 		{
 			memcpy( &size, pos, sizeof(int) );
 			pos += sizeof(int);
@@ -9351,7 +9350,7 @@ void EffectNodeImplemented::LoadParameter(unsigned char*& pos, EffectNode* paren
 			memcpy( &LocationAbs.none, pos, size );
 			pos += size;
 		}
-		else if( LocationAbs.type == LocationAbsParameter::Gravity )
+		else if( LocationAbs.type == LocationAbsType::Gravity )
 		{
 			memcpy( &size, pos, sizeof(int) );
 			pos += sizeof(int);
@@ -9359,7 +9358,7 @@ void EffectNodeImplemented::LoadParameter(unsigned char*& pos, EffectNode* paren
 			memcpy( &LocationAbs.gravity, pos, size );
 			pos += size;
 		}
-		else if( LocationAbs.type == LocationAbsParameter::AttractiveForce )
+		else if( LocationAbs.type == LocationAbsType::AttractiveForce )
 		{
 			memcpy( &size, pos, sizeof(int) );
 			pos += sizeof(int);
@@ -9371,12 +9370,19 @@ void EffectNodeImplemented::LoadParameter(unsigned char*& pos, EffectNode* paren
 		// Magnify attraction forces
 		if (ef->IsDyanamicMagnificationValid())
 		{
-			if( LocationAbs.type == LocationAbsParameter::None )
+			if( LocationAbs.type == LocationAbsType::None )
 			{
 			}
-			else if( LocationAbs.type == LocationAbsParameter::Gravity )
+			else if( LocationAbs.type == LocationAbsType::Gravity )
 			{
 				LocationAbs.gravity *= m_effect->GetMaginification();
+			}
+			else if (LocationAbs.type == LocationAbsType::AttractiveForce)
+			{
+				LocationAbs.attractiveForce.control *= m_effect->GetMaginification();
+				LocationAbs.attractiveForce.force *= m_effect->GetMaginification();
+				LocationAbs.attractiveForce.minRange *= m_effect->GetMaginification();
+				LocationAbs.attractiveForce.maxRange *= m_effect->GetMaginification();
 			}
 		}
 
@@ -15714,7 +15720,7 @@ void Instance::Update( float deltaFrame, bool shown )
 	{
 		CalculateMatrix( deltaFrame );
 	}
-	else if( m_pEffectNode->LocationAbs.type != LocationAbsParameter::None )
+	else if( m_pEffectNode->LocationAbs.type != LocationAbsType::None )
 	{
 		// If attraction forces are not default, updating is needed in each frame.
 		CalculateMatrix( deltaFrame );
@@ -16118,7 +16124,7 @@ void Instance::CalculateMatrix( float deltaFrame )
 		m_GlobalVelocity = currentPosition - m_GlobalPosition;
 		m_GlobalPosition = currentPosition;
 
-		if( m_pEffectNode->LocationAbs.type != LocationAbsParameter::None )
+		if( m_pEffectNode->LocationAbs.type != LocationAbsType::None )
 		{
 			ModifyMatrixFromLocationAbs( deltaFrame );
 		}
@@ -16217,10 +16223,10 @@ void Instance::ModifyMatrixFromLocationAbs( float deltaFrame )
 	InstanceGlobal* instanceGlobal = m_pContainer->GetRootInstance();
 
 	// Update attraction forces
-	if( m_pEffectNode->LocationAbs.type == LocationAbsParameter::None )
+	if( m_pEffectNode->LocationAbs.type == LocationAbsType::None )
 	{	
 	}
-	else if( m_pEffectNode->LocationAbs.type == LocationAbsParameter::Gravity )
+	else if( m_pEffectNode->LocationAbs.type == LocationAbsType::Gravity )
 	{
 		m_GlobalRevisionLocation.X = m_pEffectNode->LocationAbs.gravity.x *
 			m_LivingTime * m_LivingTime * 0.5f;
@@ -16229,7 +16235,7 @@ void Instance::ModifyMatrixFromLocationAbs( float deltaFrame )
 		m_GlobalRevisionLocation.Z = m_pEffectNode->LocationAbs.gravity.z *
 			m_LivingTime * m_LivingTime * 0.5f;
 	}
-	else if( m_pEffectNode->LocationAbs.type == LocationAbsParameter::AttractiveForce )
+	else if( m_pEffectNode->LocationAbs.type == LocationAbsType::AttractiveForce )
 	{
 		InstanceGlobal* instanceGlobal = m_pContainer->GetRootInstance();
 

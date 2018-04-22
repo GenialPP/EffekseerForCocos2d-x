@@ -544,12 +544,20 @@ namespace GLExt
 
 #define GL_FRAMEBUFFER_SRGB 0x8DB9
 
+#define GL_MAP_READ_BIT 0x0001
+#define GL_MAP_WRITE_BIT 0x0002
+#define GL_MAP_INVALIDATE_RANGE_BIT 0x0004
+#define GL_MAP_INVALIDATE_BUFFER_BIT 0x0008
+#define GL_MAP_FLUSH_EXPLICIT_BIT 0x0010
+#define GL_MAP_UNSYNCHRONIZED_BIT 0x0020
+
 typedef ptrdiff_t GLsizeiptr;
 typedef ptrdiff_t GLintptr;
 typedef char GLchar;
 
 bool Initialize(OpenGLDeviceType deviceType);
 bool IsSupportedVertexArray();
+bool IsSupportedBufferRange();
 
 void glDeleteBuffers(GLsizei n, const GLuint* buffers);
 GLuint glCreateShader(GLenum type);
@@ -591,6 +599,10 @@ void glGenSamplers(GLsizei n, GLuint *samplers);
 void glDeleteSamplers(GLsizei n, const GLuint * samplers);
 void glSamplerParameteri(GLuint sampler, GLenum pname, GLint param);
 void glBindSampler(GLuint unit, GLuint sampler);
+
+
+void* glMapBufferRange(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access);
+GLboolean glUnmapBuffer(GLenum target);
 
 void glCompressedTexImage2D(GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLint border, GLsizei imageSize, const void *data);
 
@@ -1386,6 +1398,9 @@ public:
 	virtual int GetRef() { return ::Effekseer::ReferenceObject::GetRef(); }
 	virtual int AddRef() { return ::Effekseer::ReferenceObject::AddRef(); }
 	virtual int Release() { return ::Effekseer::ReferenceObject::Release(); }
+
+private:
+	void GenerateIndexData();
 };
 
 //----------------------------------------------------------------------------------
@@ -1894,6 +1909,9 @@ typedef void (EFK_STDCALL * FP_glDeleteSamplers) (GLsizei n, const GLuint * samp
 typedef void (EFK_STDCALL * FP_glSamplerParameteri) (GLuint sampler, GLenum pname, GLint param);
 typedef void (EFK_STDCALL * FP_glBindSampler) (GLuint unit, GLuint sampler);
 
+typedef void* (EFK_STDCALL *FP_glMapBufferRange)(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access);
+typedef GLboolean(EFK_STDCALL *FP_glUnmapBuffer)(GLenum target);
+
 typedef void (EFK_STDCALL * FP_glCompressedTexImage2D) (GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLint border, GLsizei imageSize, const void *data);
 
 static FP_glDeleteBuffers g_glDeleteBuffers = NULL;
@@ -1935,6 +1953,9 @@ static FP_glDeleteSamplers g_glDeleteSamplers = nullptr;
 static FP_glSamplerParameteri g_glSamplerParameteri = nullptr;
 static FP_glBindSampler g_glBindSampler = nullptr;
 
+static FP_glMapBufferRange g_glMapBufferRange = NULL;
+static FP_glUnmapBuffer g_glUnmapBuffer = NULL;
+
 static FP_glCompressedTexImage2D g_glCompressedTexImage2D = nullptr;
 
 #elif defined(__EFFEKSEER_RENDERER_GLES2__)
@@ -1943,14 +1964,21 @@ typedef void (* FP_glGenVertexArraysOES) (GLsizei n, GLuint *arrays);
 typedef void (* FP_glDeleteVertexArraysOES) (GLsizei n, const GLuint *arrays);
 typedef void (* FP_glBindVertexArrayOES) (GLuint array);
 
+typedef void* (* FP_glMapBufferRangeOES)(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access);
+typedef GLboolean (* FP_glUnmapBufferOES)(GLenum target);
+
 static FP_glGenVertexArraysOES g_glGenVertexArraysOES = NULL;
 static FP_glDeleteVertexArraysOES g_glDeleteVertexArraysOES = NULL;
 static FP_glBindVertexArrayOES g_glBindVertexArrayOES = NULL;
+
+static FP_glMapBufferRangeOES g_glMapBufferRangeOES = NULL;
+static FP_glUnmapBufferOES g_glUnmapBufferOES = NULL;
 
 #endif
 
 static bool g_isInitialized = false;
 static bool g_isSupportedVertexArray = false;
+static bool g_isSurrpotedBufferRange = false;
 
 #if _WIN32
 #define GET_PROC(name)	g_##name = (FP_##name)wglGetProcAddress( #name ); if(g_##name==NULL) return false;
@@ -2011,9 +2039,13 @@ bool Initialize(OpenGLDeviceType deviceType)
 	GET_PROC(glSamplerParameteri);
 	GET_PROC(glBindSampler);
 
+	GET_PROC(glMapBufferRange);
+	GET_PROC(glUnmapBuffer);
+
 	GET_PROC(glCompressedTexImage2D);
 
 	g_isSupportedVertexArray = (g_glGenVertexArrays && g_glDeleteVertexArrays && g_glBindVertexArray);
+	g_isSurrpotedBufferRange = (g_glMapBufferRange && g_glUnmapBuffer);
 #endif
 
 #if defined(__EFFEKSEER_RENDERER_GLES2__)
@@ -2023,11 +2055,19 @@ bool Initialize(OpenGLDeviceType deviceType)
 	g_glDeleteVertexArraysOES = ::glDeleteVertexArraysOES;
 	g_glBindVertexArrayOES = ::glBindVertexArrayOES;
 	g_isSupportedVertexArray = true;
+
+	g_glMapBufferRangeOES = ::glMapBufferRangeEXT;
+	g_glUnmapBufferOES = ::glUnmapBufferOES;
+	g_isSurrpotedBufferRange = true;
 #else
 	GET_PROC(glGenVertexArraysOES);
 	GET_PROC(glDeleteVertexArraysOES);
 	GET_PROC(glBindVertexArrayOES);
 	g_isSupportedVertexArray = (g_glGenVertexArraysOES && g_glDeleteVertexArraysOES && g_glBindVertexArrayOES);
+
+	GET_PROC(g_glMapBufferRangeOES);
+	GET_PROC(g_glUnmapBufferOES);
+	g_isSurrpotedBufferRange = (g_glMapBufferRangeOES && g_glUnmapBufferOES);
 #endif
 
 #else
@@ -2045,6 +2085,11 @@ bool Initialize(OpenGLDeviceType deviceType)
 bool IsSupportedVertexArray()
 {
 	return g_isSupportedVertexArray;
+}
+
+bool IsSupportedBufferRange()
+{
+	return g_isSurrpotedBufferRange;
 }
 
 void glDeleteBuffers(GLsizei n, const GLuint* buffers)
@@ -2396,6 +2441,28 @@ void glBindSampler(GLuint unit, GLuint sampler)
 #elif defined(__EFFEKSEER_RENDERER_GLES2__) || defined(__EFFEKSEER_RENDERER_GL2__)
 #else
 	::glBindSampler(unit, sampler);
+#endif
+}
+
+void* glMapBufferRange(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access)
+{
+#if _WIN32
+	return g_glMapBufferRange(target, offset, length, access);
+#elif defined(__EFFEKSEER_RENDERER_GLES2__)
+	return g_glMapBufferRangeOES(target, offset, length, access);
+#else
+	return ::glMapBufferRange(target, offset, length, access);
+#endif
+}
+
+GLboolean glUnmapBuffer(GLenum target)
+{
+#if _WIN32
+	return g_glUnmapBuffer(target);
+#elif defined(__EFFEKSEER_RENDERER_GLES2__)
+	return g_glUnmapBufferOES(target);
+#else
+	return ::glUnmapBuffer(target);
 #endif
 }
 
@@ -3861,22 +3928,54 @@ void RendererImplemented::OnResetDevice()
 		device->OnResetDevice();
 	}
 
+	GenerateIndexData();
+}
+
+//----------------------------------------------------------------------------------
+// インデックスデータの生成
+//----------------------------------------------------------------------------------
+void RendererImplemented::GenerateIndexData()
+{
+	// インデックスの生成
+	if( m_indexBuffer != NULL )
 	{
 		m_indexBuffer->Lock();
 
 		// ( 標準設定で　DirectX 時計周りが表, OpenGLは反時計回りが表 )
 		for( int i = 0; i < m_squareMaxCount; i++ )
 		{
-			uint16_t* buf = (uint16_t*)m_indexBuffer->GetBufferDirect( 6 );
-			buf[0] = 3 + 4 * i;
-			buf[1] = 1 + 4 * i;
-			buf[2] = 0 + 4 * i;
-			buf[3] = 3 + 4 * i;
-			buf[4] = 0 + 4 * i;
-			buf[5] = 2 + 4 * i;
+			uint16_t* buf = (uint16_t*) m_indexBuffer->GetBufferDirect(6);
+			buf[0] = (uint16_t) (3 + 4 * i);
+			buf[1] = (uint16_t) (1 + 4 * i);
+			buf[2] = (uint16_t) (0 + 4 * i);
+			buf[3] = (uint16_t) (3 + 4 * i);
+			buf[4] = (uint16_t) (0 + 4 * i);
+			buf[5] = (uint16_t) (2 + 4 * i);
 		}
 
 		m_indexBuffer->Unlock();
+	}
+
+	// ワイヤーフレーム用インデックスの生成
+	if( m_indexBufferForWireframe != NULL )
+	{
+		m_indexBufferForWireframe->Lock();
+
+		// ( 標準設定で　DirectX 時計周りが表, OpenGLは反時計回りが表 )
+		for( int i = 0; i < m_squareMaxCount; i++ )
+		{
+			uint16_t* buf = (uint16_t*)m_indexBufferForWireframe->GetBufferDirect( 8 );
+			buf[0] = (uint16_t)(0 + 4 * i);
+			buf[1] = (uint16_t)(1 + 4 * i);
+			buf[2] = (uint16_t)(2 + 4 * i);
+			buf[3] = (uint16_t)(3 + 4 * i);
+			buf[4] = (uint16_t)(0 + 4 * i);
+			buf[5] = (uint16_t)(2 + 4 * i);
+			buf[6] = (uint16_t)(1 + 4 * i);
+			buf[7] = (uint16_t)(3 + 4 * i);
+		}
+
+		m_indexBufferForWireframe->Unlock();
 	}
 }
 
@@ -4220,22 +4319,6 @@ void RendererImplemented::SetSquareMaxCount(int32_t count)
 	{
 		m_indexBuffer = IndexBuffer::Create(this, m_squareMaxCount * 6, false);
 		if (m_indexBuffer == NULL) return;
-
-		m_indexBuffer->Lock();
-
-		// ( 標準設定で　DirectX 時計周りが表, OpenGLは反時計回りが表 )
-		for (int i = 0; i < m_squareMaxCount; i++)
-		{
-			uint16_t* buf = (uint16_t*) m_indexBuffer->GetBufferDirect(6);
-			buf[0] = (uint16_t) (3 + 4 * i);
-			buf[1] = (uint16_t) (1 + 4 * i);
-			buf[2] = (uint16_t) (0 + 4 * i);
-			buf[3] = (uint16_t) (3 + 4 * i);
-			buf[4] = (uint16_t) (0 + 4 * i);
-			buf[5] = (uint16_t) (2 + 4 * i);
-		}
-
-		m_indexBuffer->Unlock();
 	}
 
 	// 参照カウントの調整
@@ -4245,28 +4328,13 @@ void RendererImplemented::SetSquareMaxCount(int32_t count)
 	{
 		m_indexBufferForWireframe = IndexBuffer::Create( this, m_squareMaxCount * 8, false );
 		if( m_indexBufferForWireframe == NULL ) return;
-
-		m_indexBufferForWireframe->Lock();
-
-		// ( 標準設定で　DirectX 時計周りが表, OpenGLは反時計回りが表 )
-		for( int i = 0; i < m_squareMaxCount; i++ )
-		{
-			uint16_t* buf = (uint16_t*)m_indexBufferForWireframe->GetBufferDirect( 8 );
-			buf[0] = (uint16_t)(0 + 4 * i);
-			buf[1] = (uint16_t)(1 + 4 * i);
-			buf[2] = (uint16_t)(2 + 4 * i);
-			buf[3] = (uint16_t)(3 + 4 * i);
-			buf[4] = (uint16_t)(0 + 4 * i);
-			buf[5] = (uint16_t)(2 + 4 * i);
-			buf[6] = (uint16_t)(1 + 4 * i);
-			buf[7] = (uint16_t)(3 + 4 * i);
-		}
-
-		m_indexBufferForWireframe->Unlock();
 	}
 
 	// 参照カウントの調整
 	Release();
+
+	// インデックスデータの生成
+	GenerateIndexData();
 }
 
 //----------------------------------------------------------------------------------
@@ -6089,7 +6157,18 @@ void VertexBuffer::Unlock()
 	assert( m_isLock || m_ringBufferLock );
 
 	GLExt::glBindBuffer(GL_ARRAY_BUFFER, m_buffer);
-	GLExt::glBufferSubData(GL_ARRAY_BUFFER, m_vertexRingStart, m_offset, m_resource);
+
+	if (GLExt::IsSupportedBufferRange() && m_vertexRingOffset > 0)
+	{
+		auto target = GLExt::glMapBufferRange(GL_ARRAY_BUFFER, m_vertexRingStart, m_offset, GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
+		memcpy(target, m_resource, m_offset);
+		GLExt::glUnmapBuffer(GL_ARRAY_BUFFER);
+	}
+	else
+	{
+		GLExt::glBufferSubData(GL_ARRAY_BUFFER, m_vertexRingStart, m_offset, m_resource);
+	}
+
 	GLExt::glBindBuffer(GL_ARRAY_BUFFER, 0);
 	
 	m_isLock = false;
