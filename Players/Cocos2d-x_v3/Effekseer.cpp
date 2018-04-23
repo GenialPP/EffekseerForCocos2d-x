@@ -351,12 +351,12 @@ namespace efk
 #pragma endregion
 
 #pragma region Effect
-	Effect* Effect::create(const std::string& filename)
+	Effect* Effect::create(const std::string& filename, float magnification)
 	{
 		EFK_CHAR path_[300];
 		::Effekseer::ConvertUtf8ToUtf16((int16_t*)path_, 300, (const int8_t*)filename.c_str());
 
-		auto effect = Effekseer::Effect::Create(EffekseerSetting::create(), path_);
+		auto effect = Effekseer::Effect::Create(EffekseerSetting::create(), path_, magnification);
 
 		if (effect != nullptr)
 		{

@@ -22,7 +22,19 @@ namespace efk
 		::Effekseer::Effect*	effect = nullptr;
 
 	public:
-		static Effect* create(const std::string& filename);
+		/**
+			@brief
+			\~English	Create an effect.
+			\~Japanese	エフェクトを生成する。
+			@param	filename
+			\~English	a file path for .efk
+			\~Japanese	.efkへのファイルパス
+			@param	magnification
+			\~English	magnification rate of effect
+			\~Japanese	エフェクトの拡大率
+
+		*/
+		static Effect* create(const std::string& filename, float magnification = 1.0f);
 
 		Effect();
 
