@@ -2551,19 +2551,17 @@ Vector3D& Vector3D::Transform( Vector3D& o, const Vector3D& in, const Matrix44& 
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-namespace Effekseer
-{
+#if (_M_IX86_FP >= 2) || defined(__SSE__)
+#define EFK_SSE2
+#elif defined(__ARM_NEON__)
+#define EFK_NEON
+#endif
+
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-Color::Color()
-	: R	( 255 )
-	, G	( 255 )
-	, B	( 255 )
-	, A	( 255 )
+namespace Effekseer
 {
-
-}
 
 //----------------------------------------------------------------------------------
 //
@@ -2574,18 +2572,142 @@ Color::Color( uint8_t r, uint8_t g, uint8_t b, uint8_t a )
 	, B	( b )
 	, A	( a )
 {
-
 }
 
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-void Color::Mul( Color& o, const Color& in1, const Color& in2 )
+Color Color::Mul( Color in1, Color in2 )
 {
+#if defined(EFK_SSE2)
+	__m128i s1 = _mm_cvtsi32_si128(*(int32_t*)&in1);
+	__m128i s2 = _mm_cvtsi32_si128(*(int32_t*)&in2);
+	__m128i zero = _mm_setzero_si128();
+	__m128i mask = _mm_set1_epi16(1);
+
+	s1 = _mm_unpacklo_epi8(s1, zero);
+	s2 = _mm_unpacklo_epi8(s2, zero);
+
+	__m128i r0 = _mm_mullo_epi16(s1, s2);
+	__m128i r1 = _mm_srli_epi16(r0, 8);
+	__m128i r2 = _mm_and_si128(r0, mask);
+	__m128i r3 = _mm_or_si128(r2, r1);
+	__m128i res = _mm_packus_epi16(r3, zero);
+	
+	Color o;
+	*(int*)&o = _mm_cvtsi128_si32(res);
+	return o;
+#elif defined(EFK_NEON)
+	uint8x8_t s1 = vreinterpret_u8_u32(vmov_n_u32(*(uint32_t*)&in1));
+	uint8x8_t s2 = vreinterpret_u8_u32(vmov_n_u32(*(uint32_t*)&in2));
+	uint16x8_t mask = vmovq_n_u16(1);
+	uint16x8_t s3 = vmovl_u8(s1);
+	uint16x8_t s4 = vmovl_u8(s2);
+	uint16x8_t r0 = vmulq_u16(s3, s4);
+	uint16x8_t r1 = vshrq_n_u16(r0, 8);
+	uint16x8_t r2 = vandq_u16(r0, mask);
+	uint16x8_t r3 = vorrq_u16(r2, r1);
+	uint8x8_t res = vqmovn_u16(r3);
+	
+	Color o;
+	*(uint32_t*)&o = vget_lane_u32(vreinterpret_u32_u8(res), 0);
+	return o;
+#else
+	Color o;
 	o.R = (uint8_t)((float)in1.R * (float)in2.R / 255.0f);
 	o.G = (uint8_t)((float)in1.G * (float)in2.G / 255.0f);
 	o.B = (uint8_t)((float)in1.B * (float)in2.B / 255.0f);
 	o.A = (uint8_t)((float)in1.A * (float)in2.A / 255.0f);
+	return o;
+#endif
+}
+
+//----------------------------------------------------------------------------------
+//
+//----------------------------------------------------------------------------------
+Color Color::Mul( Color in1, float in2 )
+{
+#if defined(EFK_SSE2)
+	__m128i s1 = _mm_cvtsi32_si128(*(int32_t*)&in1);
+	__m128i s2 = _mm_set1_epi16((int16_t)(in2 * 256));
+	__m128i zero = _mm_setzero_si128();
+	
+	s1 = _mm_unpacklo_epi8(s1, zero);
+
+	__m128i res = _mm_mullo_epi16(s1, s2);
+	res = _mm_srli_epi16(res, 8);
+	res = _mm_packus_epi16(res, zero);
+	
+	Color o;
+	*(int*)&o = _mm_cvtsi128_si32(res);
+	return o;
+#elif defined(EFK_NEON)
+	uint8x8_t s1 = vreinterpret_u8_u32(vmov_n_u32(*(uint32_t*)&in1));
+	uint16x8_t s2 = vmovq_n_u16((uint16_t)(in2 * 256));
+	uint16x8_t s3 = vmovl_u8(s1);
+	uint16x8_t r0 = vmulq_u16(s3, s2);
+	uint16x8_t r1 = vshrq_n_u16(r0, 8);
+	uint8x8_t res = vqmovn_u16(r1);
+	
+	Color o;
+	*(uint32_t*)&o = vget_lane_u32(vreinterpret_u32_u8(res), 0);
+	return o;
+#else
+	Color o;
+	o.R = (uint8_t)Clamp((int)((float)in1.R * in2), 255, 0);
+	o.G = (uint8_t)Clamp((int)((float)in1.G * in2), 255, 0);
+	o.B = (uint8_t)Clamp((int)((float)in1.B * in2), 255, 0);
+	o.A = (uint8_t)Clamp((int)((float)in1.A * in2), 255, 0);
+	return o;
+#endif
+}
+
+//----------------------------------------------------------------------------------
+//
+//----------------------------------------------------------------------------------
+Color Color::Lerp( const Color in1, const Color in2, float t )
+{
+#if defined(EFK_SSE2)
+	__m128i s1 = _mm_cvtsi32_si128(*(int32_t*)&in1);
+	__m128i s2 = _mm_cvtsi32_si128(*(int32_t*)&in2);
+	__m128i tm = _mm_set1_epi16((int16_t)(t * 256));
+	__m128i zero = _mm_setzero_si128();
+
+	s1 = _mm_unpacklo_epi8(s1, zero);
+	s2 = _mm_unpacklo_epi8(s2, zero);
+	
+	__m128i r0 = _mm_subs_epi16(s2, s1);
+	__m128i r1 = _mm_mullo_epi16(r0, tm);
+	__m128i r2 = _mm_srai_epi16(r1, 8);
+	__m128i r3 = _mm_adds_epi16(s1, r2);
+	__m128i res = _mm_packus_epi16(r3, zero);
+	
+	Color o;
+	*(int*)&o = _mm_cvtsi128_si32(res);
+	return o;
+#elif defined(EFK_NEON)
+	uint8x8_t s1 = vreinterpret_u8_u32(vmov_n_u32(*(uint32_t*)&in1));
+	uint8x8_t s2 = vreinterpret_u8_u32(vmov_n_u32(*(uint32_t*)&in2));
+	int16x8_t tm = vmovq_n_s16((int16_t)(t * 256));
+	uint16x8_t s3 = vmovl_u8(s1);
+	uint16x8_t s4 = vmovl_u8(s2);
+	int16x8_t r0 = vqsubq_s16(s4, s3);
+	int16x8_t r1 = vmulq_s16(r0, tm);
+	int16x8_t r2 = vrshrq_n_s16(r1, 8);
+	int16x8_t r3 = vqaddq_s16(s3, r2);
+	uint8x8_t res = vqmovn_u16(r3);
+	
+	Color o;
+	*(uint32_t*)&o = vget_lane_u32(vreinterpret_u32_u8(res), 0);
+	return o;
+#else
+	Color o;
+	o.R = (uint8_t)Clamp( in1.R + (in2.R - in1.R) * t, 255, 0 );
+	o.G = (uint8_t)Clamp( in1.G + (in2.G - in1.G) * t, 255, 0 );
+	o.B = (uint8_t)Clamp( in1.B + (in2.B - in1.B) * t, 255, 0 );
+	o.A = (uint8_t)Clamp( in1.A + (in2.A - in1.A) * t, 255, 0 );
+	return o;
+#endif
 }
 
 //----------------------------------------------------------------------------------
@@ -4226,53 +4348,8 @@ struct easing_vector3d
 	}
 };
 
-//----------------------------------------------------------------------------------
-//
-//----------------------------------------------------------------------------------
-struct color
-{
-	uint8_t		r;
-	uint8_t		g;
-	uint8_t		b;
-	uint8_t		a;
-	
-	void reset()
-	{
-		assert( sizeof(color) == 4 );
-		memset( this, 255, sizeof(color) );
-	}
-
-	void setValueToArg( Color& c ) const
-	{
-		c.R = r;
-		c.G = g;
-		c.B = b;
-		c.A = a;
-	}
-
-	static color mul( const color& in1, const color& in2 )
-	{
-		color o;
-		o.r = (uint8_t)((float)in1.r * (float)in2.r / 255.0f);
-		o.g = (uint8_t)((float)in1.g * (float)in2.g / 255.0f);
-		o.b = (uint8_t)((float)in1.b * (float)in2.b / 255.0f);
-		o.a = (uint8_t)((float)in1.a * (float)in2.a / 255.0f);
-		return o;
-	}
-
-	static color mul( const color& in1, float in2 )
-	{
-		color o;
-		o.r = (uint8_t)((float)in1.r * in2);
-		o.g = (uint8_t)((float)in1.g * in2);
-		o.b = (uint8_t)((float)in1.b * in2);
-		o.a = (uint8_t)((float)in1.a * in2);
-		return o;
-	}
-};
-
-inline color HSVToRGB(color hsv) {
-	int H = hsv.r, S = hsv.g, V = hsv.b;
+inline Color HSVToRGB(Color hsv) {
+	int H = hsv.R, S = hsv.G, V = hsv.B;
 	int Hi, R=0, G=0, B=0, p, q, t;
 	float f, s;
 
@@ -4293,11 +4370,11 @@ inline color HSVToRGB(color hsv) {
 	case 4: R = t; G = p; B = V; break;
 	case 5: R = V; G = p; B = q; break;
 	}
-	color result;
-	result.r = R;
-	result.g = G;
-	result.b = B;
-	result.a = hsv.a;
+	Color result;
+	result.R = R;
+	result.G = G;
+	result.B = B;
+	result.A = hsv.A;
 	return result;
 }
 
@@ -4307,20 +4384,20 @@ inline color HSVToRGB(color hsv) {
 struct random_color
 {
 	ColorMode mode;
-	color	max;
-	color	min;
+	Color	max;
+	Color	min;
 
 	void reset()
 	{
 		assert( sizeof(random_color) == 12 );
 		mode = COLOR_MODE_RGBA;
-		max.reset();
-		min.reset();
+		max = {255, 255, 255, 255};
+		min = {255, 255, 255, 255};
 	};
 
-	color getValue(IRandObject& g) const
+	Color getValue(IRandObject& g) const
 	{
-		color r = getDirectValue( g );
+		Color r = getDirectValue( g );
 		if( mode == COLOR_MODE_HSVA )
 		{
 			r = HSVToRGB( r );
@@ -4328,13 +4405,13 @@ struct random_color
 		return r;
 	}
 	
-	color getDirectValue(IRandObject& g) const
+	Color getDirectValue(IRandObject& g) const
 	{
-		color r;
-		r.r = (uint8_t) (g.GetRand(min.r, max.r));
-		r.g = (uint8_t) (g.GetRand(min.g, max.g));
-		r.b = (uint8_t) (g.GetRand(min.b, max.b));
-		r.a = (uint8_t) (g.GetRand(min.a, max.a));
+		Color r;
+		r.R = (uint8_t) (g.GetRand(min.R, max.R));
+		r.G = (uint8_t) (g.GetRand(min.G, max.G));
+		r.B = (uint8_t) (g.GetRand(min.B, max.B));
+		r.A = (uint8_t) (g.GetRand(min.A, max.A));
 		return r;
 	}
 
@@ -4349,8 +4426,8 @@ struct random_color
 		{
 			mode = COLOR_MODE_RGBA;
 		}
-		max = ReadData<color>( pos );
-		min = ReadData<color>( pos );
+		max = ReadData<Color>( pos );
+		min = ReadData<Color>( pos );
 	}
 };
 
@@ -4365,48 +4442,23 @@ struct easing_color
 	float easingB;
 	float easingC;
 
-	void setValueToArg( color& o, const color& start_, const color& end_, float t ) const
+	void setValueToArg( Color& o, const Color& start_, const Color& end_, float t ) const
 	{
 		assert( start.mode == end.mode );
-		int d_r = end_.r - start_.r;
-		int d_g = end_.g - start_.g;
-		int d_b = end_.b - start_.b;
-		int d_a = end_.a - start_.a;
 		float d = easingA * t * t * t + easingB * t * t + easingC * t;
-		o.r = (uint8_t)Clamp( start_.r + d * d_r, 255.0f, 0.0f );
-		o.g = (uint8_t)Clamp( start_.g + d * d_g, 255.0f, 0.0f );
-		o.b = (uint8_t)Clamp( start_.b + d * d_b, 255.0f, 0.0f );
-		o.a = (uint8_t)Clamp( start_.a + d * d_a, 255.0f, 0.0f );
+		o = Color::Lerp(start_, end_, d);
 		if( start.mode == COLOR_MODE_HSVA )
 		{
 			o = HSVToRGB( o );
 		}
 	}
 
-	void setValueToArg( Color& o, const color& start_, const color& end_, float t ) const
-	{
-		assert( start.mode == end.mode );
-		int d_r = end_.r - start_.r;
-		int d_g = end_.g - start_.g;
-		int d_b = end_.b - start_.b;
-		int d_a = end_.a - start_.a;
-		float d = easingA * t * t * t + easingB * t * t + easingC * t;
-		o.R = (uint8_t)Clamp( start_.r + d * d_r, 255.0f, 0.0f );
-		o.G = (uint8_t)Clamp( start_.g + d * d_g, 255.0f, 0.0f );
-		o.B = (uint8_t)Clamp( start_.b + d * d_b, 255.0f, 0.0f );
-		o.A = (uint8_t)Clamp( start_.a + d * d_a, 255.0f, 0.0f );
-		if( start.mode == COLOR_MODE_HSVA )
-		{
-			*(color*)&o = HSVToRGB( *(color*)&o );
-		}
-	}
-
-	color getStartValue(IRandObject& g) const
+	Color getStartValue(IRandObject& g) const
 	{
 		return start.getDirectValue( g );
 	}
 	
-	color getEndValue(IRandObject& g) const
+	Color getEndValue(IRandObject& g) const
 	{
 		return end.getDirectValue( g);
 	}
@@ -5294,7 +5346,7 @@ public:
 	{
 		struct
 		{
-			color all;
+			Color all;
 		} fixed;
 
 		struct
@@ -6226,25 +6278,25 @@ public:
 	struct InstanceValues
 	{
 		// 色
-		color _color;
-		color _original;
+		Color _color;
+		Color _original;
 
 		union 
 		{
 			struct
 			{
-				color _color;
+				Color _color;
 			} fixed;
 
 			struct
 			{
-				color _color;
+				Color _color;
 			} random;
 
 			struct
 			{
-				color start;
-				color  end;
+				Color start;
+				Color  end;
 
 			} easing;
 
@@ -6329,7 +6381,7 @@ struct RibbonAllColorParameter
 	{
 		struct
 		{
-			color all;
+			Color all;
 		} fixed;
 
 		struct
@@ -6363,8 +6415,8 @@ struct RibbonColorParameter
 
 		struct
 		{
-			color l;
-			color r;
+			Color l;
+			Color r;
 		} fixed;
 	};
 };
@@ -6405,25 +6457,25 @@ public:
 	struct InstanceValues
 	{
 		// 色
-		color _color;
-		color _original;
+		Color _color;
+		Color _original;
 
 		union 
 		{
 			struct
 			{
-				color _color;
+				Color _color;
 			} fixed;
 
 			struct
 			{
-				color _color;
+				Color _color;
 			} random;
 
 			struct
 			{
-				color start;
-				color  end;
+				Color start;
+				Color  end;
 
 			} easing;
 
@@ -6574,7 +6626,7 @@ struct RingColorParameter
 
 	union
 	{	
-		color fixed;
+		Color fixed;
 		random_color random;
 		easing_color easing;
 	};
@@ -6639,25 +6691,25 @@ struct RingLocationValues
 //----------------------------------------------------------------------------------
 struct RingColorValues
 {
-	color	current;
-	color	original;
+	Color	current;
+	Color	original;
 
 	union
 	{
 		struct
 		{
-			color _color;
+			Color _color;
 		} fixed;
 
 		struct
 		{
-			color _color;
+			Color _color;
 		} random;
 
 		struct
 		{
-			color  start;
-			color  end;
+			Color  start;
+			Color  end;
 		} easing;
 	};
 };
@@ -6838,10 +6890,10 @@ struct SpriteColorParameter
 
 		struct
 		{
-			color ll;
-			color lr;
-			color ul;
-			color ur;
+			Color ll;
+			Color lr;
+			Color ul;
+			Color ur;
 		} fixed;
 	};
 };
@@ -6888,26 +6940,26 @@ public:
 	struct InstanceValues
 	{
 		// 色
-		color _color;
+		Color _color;
 
-		color _originalColor;
+		Color _originalColor;
 		
 		union 
 		{
 			struct
 			{
-				color _color;
+				Color _color;
 			} fixed;
 
 			struct
 			{
-				color _color;
+				Color _color;
 			} random;
 
 			struct
 			{
-				color start;
-				color  end;
+				Color start;
+				Color  end;
 
 			} easing;
 
@@ -7019,18 +7071,18 @@ public:
 			{
 				struct
 				{
-					color color_;
+					Effekseer::Color color_;
 				} fixed;
 
 				struct
 				{
-					color color_;
+					Effekseer::Color color_;
 				} random;
 
 				struct
 				{
-					color start;
-					color  end;
+					Effekseer::Color start;
+					Effekseer::Color  end;
 				} easing;
 
 				struct
@@ -7068,21 +7120,21 @@ public:
 
 	struct InstanceValues
 	{
-		color	colorLeft;
-		color	colorCenter;
-		color	colorRight;
+		Color	colorLeft;
+		Color	colorCenter;
+		Color	colorRight;
 
-		color	colorLeftMiddle;
-		color	colorCenterMiddle;
-		color	colorRightMiddle;
+		Color	colorLeftMiddle;
+		Color	colorCenterMiddle;
+		Color	colorRightMiddle;
 
-		color	_colorLeft;
-		color	_colorCenter;
-		color	_colorRight;
+		Color	_colorLeft;
+		Color	_colorCenter;
+		Color	_colorRight;
 
-		color	_colorLeftMiddle;
-		color	_colorCenterMiddle;
-		color	_colorRightMiddle;
+		Color	_colorLeftMiddle;
+		Color	_colorCenterMiddle;
+		Color	_colorRightMiddle;
 
 		float	SizeFor;
 		float	SizeMiddle;
@@ -8427,10 +8479,10 @@ public:
 	Vector3D	m_GlobalRevisionVelocity;
 	
 	// Color for binding
-	color		ColorInheritance;
+	Color		ColorInheritance;
 
 	// Parent color
-	color		ColorParent;
+	Color		ColorParent;
 
 	union 
 	{
@@ -10121,22 +10173,20 @@ void EffectNodeModel::Rendering(const Instance& instance, Manager* manager)
 
 		instanceParameter.UV = instance.GetUV();
 		
-		color _color;
+		Color _color;
 		if (RendererCommon.ColorBindType == BindType::Always || RendererCommon.ColorBindType == BindType::WhenCreating)
 		{
-			_color = color::mul(instValues._original, instance.ColorParent);
+			_color = Color::Mul(instValues._original, instance.ColorParent);
 		}
 		else
 		{
 			_color = instValues._original;
 		}
-
-		_color.setValueToArg( instanceParameter.AllColor );
-
-		// Apply global color
+		instanceParameter.AllColor = _color;
+		
 		if (instance.m_pContainer->GetRootInstance()->IsGlobalColorSet)
 		{
-			Color::Mul(instanceParameter.AllColor, instanceParameter.AllColor, instance.m_pContainer->GetRootInstance()->GlobalColor);
+			instanceParameter.AllColor = Color::Mul(instanceParameter.AllColor, instance.m_pContainer->GetRootInstance()->GlobalColor);
 		}
 
 		renderer->Rendering( nodeParameter, instanceParameter, m_userData );
@@ -10217,15 +10267,15 @@ void EffectNodeModel::InitializeRenderedInstance(Instance& instance, Manager* ma
 		instValues.allColorValues.fcurve_rgba.offset[2] = AllColor.fcurve_rgba.FCurve->B.GetOffset(*instanceGlobal);
 		instValues.allColorValues.fcurve_rgba.offset[3] = AllColor.fcurve_rgba.FCurve->A.GetOffset(*instanceGlobal);
 		
-		instValues._original.r = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[0] + AllColor.fcurve_rgba.FCurve->R.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
-		instValues._original.g = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[1] + AllColor.fcurve_rgba.FCurve->G.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
-		instValues._original.b = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[2] + AllColor.fcurve_rgba.FCurve->B.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
-		instValues._original.a = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[3] + AllColor.fcurve_rgba.FCurve->A.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
+		instValues._original.R = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[0] + AllColor.fcurve_rgba.FCurve->R.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
+		instValues._original.G = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[1] + AllColor.fcurve_rgba.FCurve->G.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
+		instValues._original.B = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[2] + AllColor.fcurve_rgba.FCurve->B.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
+		instValues._original.A = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[3] + AllColor.fcurve_rgba.FCurve->A.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
 	}
 
 	if (RendererCommon.ColorBindType == BindType::Always || RendererCommon.ColorBindType == BindType::WhenCreating)
 	{
-		instValues._color = color::mul(instValues._original, instance.ColorParent);
+		instValues._color = Color::Mul(instValues._original, instance.ColorParent);
 	}
 	else
 	{
@@ -10262,21 +10312,21 @@ void EffectNodeModel::UpdateRenderedInstance(Instance& instance, Manager* manage
 	}
 	else if( AllColor.type == StandardColorParameter::FCurve_RGBA )
 	{
-		instValues._original.r = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[0] + AllColor.fcurve_rgba.FCurve->R.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
-		instValues._original.g = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[1] + AllColor.fcurve_rgba.FCurve->G.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
-		instValues._original.b = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[2] + AllColor.fcurve_rgba.FCurve->B.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
-		instValues._original.a = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[3] + AllColor.fcurve_rgba.FCurve->A.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
+		instValues._original.R = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[0] + AllColor.fcurve_rgba.FCurve->R.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
+		instValues._original.G = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[1] + AllColor.fcurve_rgba.FCurve->G.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
+		instValues._original.B = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[2] + AllColor.fcurve_rgba.FCurve->B.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
+		instValues._original.A = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[3] + AllColor.fcurve_rgba.FCurve->A.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
 	}
 
 	float fadeAlpha = GetFadeAlpha(instance);
 	if (fadeAlpha != 1.0f)
 	{
-		instValues._original.a = (uint8_t)(instValues._original.a * fadeAlpha);
+		instValues._original.A = (uint8_t)(instValues._original.A * fadeAlpha);
 	}
 
 	if (RendererCommon.ColorBindType == BindType::Always || RendererCommon.ColorBindType == BindType::WhenCreating)
 	{
-		instValues._color = color::mul(instValues._original, instance.ColorParent);
+		instValues._color = Color::Mul(instValues._original, instance.ColorParent);
 	}
 	else
 	{
@@ -10472,23 +10522,21 @@ void EffectNodeRibbon::Rendering(const Instance& instance, Manager* manager)
 	RibbonRenderer* renderer = manager->GetRibbonRenderer();
 	if( renderer != NULL )
 	{
-		color _color;
+		Color _color;
 		if (RendererCommon.ColorBindType == BindType::Always || RendererCommon.ColorBindType == BindType::WhenCreating)
 		{
-			_color = color::mul(instValues._original, instance.ColorParent);
+			_color = Color::Mul(instValues._original, instance.ColorParent);
 		}
 		else
 		{
 			_color = instValues._original;
 		}
 
-		_color.setValueToArg( m_instanceParameter.AllColor );
-
-
+		m_instanceParameter.AllColor = _color;
 		m_instanceParameter.SRTMatrix43 = instance.GetGlobalMatrix43();
 
-		color color_l = _color;
-		color color_r = _color;
+		Color color_l = _color;
+		Color color_r = _color;
 
 		if( RibbonColor.type == RibbonColorParameter::Default )
 		{
@@ -10496,18 +10544,18 @@ void EffectNodeRibbon::Rendering(const Instance& instance, Manager* manager)
 		}
 		else if( RibbonColor.type == RibbonColorParameter::Fixed )
 		{
-			color_l = color::mul( color_l, RibbonColor.fixed.l );
-			color_r = color::mul( color_r, RibbonColor.fixed.r );
+			color_l = Color::Mul( color_l, RibbonColor.fixed.l );
+			color_r = Color::Mul( color_r, RibbonColor.fixed.r );
 		}
 
-		color_l.setValueToArg( m_instanceParameter.Colors[0] );
-		color_r.setValueToArg( m_instanceParameter.Colors[1] );
+		m_instanceParameter.Colors[0] = color_l;
+		m_instanceParameter.Colors[1] = color_r;
 
-		// Apply global color
+		// Apply global Color
 		if (instance.m_pContainer->GetRootInstance()->IsGlobalColorSet)
 		{
-			Color::Mul(m_instanceParameter.Colors[0], m_instanceParameter.Colors[0], instance.m_pContainer->GetRootInstance()->GlobalColor);
-			Color::Mul(m_instanceParameter.Colors[1], m_instanceParameter.Colors[1], instance.m_pContainer->GetRootInstance()->GlobalColor);
+			m_instanceParameter.Colors[0] = Color::Mul(m_instanceParameter.Colors[0], instance.m_pContainer->GetRootInstance()->GlobalColor);
+			m_instanceParameter.Colors[1] = Color::Mul(m_instanceParameter.Colors[1], instance.m_pContainer->GetRootInstance()->GlobalColor);
 		}
 
 		if( RibbonPosition.type == RibbonPositionParameter::Default )
@@ -10565,7 +10613,7 @@ void EffectNodeRibbon::InitializeRenderedInstance(Instance& instance, Manager* m
 
 	if (RendererCommon.ColorBindType == BindType::Always || RendererCommon.ColorBindType == BindType::WhenCreating)
 	{
-		instValues._color = color::mul(instValues._original, instance.ColorParent);
+		instValues._color = Color::Mul(instValues._original, instance.ColorParent);
 	}
 	else
 	{
@@ -10604,12 +10652,12 @@ void EffectNodeRibbon::UpdateRenderedInstance(Instance& instance, Manager* manag
 	float fadeAlpha = GetFadeAlpha(instance);
 	if (fadeAlpha != 1.0f)
 	{
-		instValues._original.a = (uint8_t)(instValues._original.a * fadeAlpha);
+		instValues._original.A = (uint8_t)(instValues._original.A * fadeAlpha);
 	}
 
 	if (RendererCommon.ColorBindType == BindType::Always || RendererCommon.ColorBindType == BindType::WhenCreating)
 	{
-		instValues._color = color::mul(instValues._original, instance.ColorParent);
+		instValues._color = Color::Mul(instValues._original, instance.ColorParent);
 	}
 	else
 	{
@@ -10853,15 +10901,15 @@ void EffectNodeRing::Rendering(const Instance& instance, Manager* manager)
 		nodeParameter.IsDepthOffsetScaledWithCamera = DepthValues.IsDepthOffsetScaledWithCamera;
 		nodeParameter.IsDepthOffsetScaledWithParticleScale = DepthValues.IsDepthOffsetScaledWithParticleScale;
 
-		color _outerColor;
-		color _centerColor;
-		color _innerColor;
+		Color _outerColor;
+		Color _centerColor;
+		Color _innerColor;
 
 		if (RendererCommon.ColorBindType == BindType::Always || RendererCommon.ColorBindType == BindType::WhenCreating)
 		{
-			_outerColor = color::mul(instValues.outerColor.original, instance.ColorParent);
-			_centerColor = color::mul(instValues.centerColor.original, instance.ColorParent);
-			_innerColor = color::mul(instValues.innerColor.original, instance.ColorParent);
+			_outerColor = Color::Mul(instValues.outerColor.original, instance.ColorParent);
+			_centerColor = Color::Mul(instValues.centerColor.original, instance.ColorParent);
+			_innerColor = Color::Mul(instValues.innerColor.original, instance.ColorParent);
 		}
 		else
 		{
@@ -10880,17 +10928,17 @@ void EffectNodeRing::Rendering(const Instance& instance, Manager* manager)
 
 		instanceParameter.CenterRatio = instValues.centerRatio.current;
 
-		_outerColor.setValueToArg( instanceParameter.OuterColor );
-		_centerColor.setValueToArg( instanceParameter.CenterColor );
-		_innerColor.setValueToArg( instanceParameter.InnerColor );
-
-		// Apply global color
+		// Apply global Color
 		if (instance.m_pContainer->GetRootInstance()->IsGlobalColorSet)
 		{
-			Color::Mul(instanceParameter.OuterColor, instanceParameter.OuterColor, instance.m_pContainer->GetRootInstance()->GlobalColor);
-			Color::Mul(instanceParameter.CenterColor, instanceParameter.CenterColor, instance.m_pContainer->GetRootInstance()->GlobalColor);
-			Color::Mul(instanceParameter.InnerColor, instanceParameter.InnerColor, instance.m_pContainer->GetRootInstance()->GlobalColor);
+			Color::Mul(_outerColor, instance.m_pContainer->GetRootInstance()->GlobalColor);
+			Color::Mul(_centerColor, instance.m_pContainer->GetRootInstance()->GlobalColor);
+			Color::Mul(_innerColor, instance.m_pContainer->GetRootInstance()->GlobalColor);
 		}
+
+		instanceParameter.OuterColor  = _outerColor;
+		instanceParameter.CenterColor = _centerColor;
+		instanceParameter.InnerColor  = _innerColor;
 		
 		instanceParameter.UV = instance.GetUV();
 		renderer->Rendering( nodeParameter, instanceParameter, m_userData );
@@ -10950,9 +10998,9 @@ void EffectNodeRing::InitializeRenderedInstance(Instance& instance, Manager* man
 
 	if (RendererCommon.ColorBindType == BindType::Always || RendererCommon.ColorBindType == BindType::WhenCreating)
 	{
-		instValues.outerColor.current = color::mul(instValues.outerColor.original, instance.ColorParent);
-		instValues.centerColor.current = color::mul(instValues.centerColor.original, instance.ColorParent);
-		instValues.innerColor.current = color::mul(instValues.innerColor.original, instance.ColorParent);
+		instValues.outerColor.current = Color::Mul(instValues.outerColor.original, instance.ColorParent);
+		instValues.centerColor.current = Color::Mul(instValues.centerColor.original, instance.ColorParent);
+		instValues.innerColor.current = Color::Mul(instValues.innerColor.original, instance.ColorParent);
 	}
 	else
 	{
@@ -10984,9 +11032,9 @@ void EffectNodeRing::UpdateRenderedInstance(Instance& instance, Manager* manager
 
 	if (RendererCommon.ColorBindType == BindType::Always || RendererCommon.ColorBindType == BindType::WhenCreating)
 	{
-		instValues.outerColor.current = color::mul(instValues.outerColor.original, instance.ColorParent);
-		instValues.centerColor.current = color::mul(instValues.centerColor.original, instance.ColorParent);
-		instValues.innerColor.current = color::mul(instValues.innerColor.original, instance.ColorParent);
+		instValues.outerColor.current = Color::Mul(instValues.outerColor.original, instance.ColorParent);
+		instValues.centerColor.current = Color::Mul(instValues.centerColor.original, instance.ColorParent);
+		instValues.innerColor.current = Color::Mul(instValues.innerColor.original, instance.ColorParent);
 	}
 	else
 	{
@@ -11206,7 +11254,7 @@ void EffectNodeRing::UpdateColorValues( Instance& instance, const RingColorParam
 	float fadeAlpha = GetFadeAlpha(instance);
 	if (fadeAlpha != 1.0f)
 	{
-		values.original.a = (uint8_t)(values.original.a * fadeAlpha);
+		values.original.A = (uint8_t)(values.original.A * fadeAlpha);
 	}
 }
 
@@ -11433,49 +11481,49 @@ void EffectNodeSprite::Rendering(const Instance& instance, Manager* manager)
 		nodeParameter.ZSort = DepthValues.ZSort;
 
 		SpriteRenderer::InstanceParameter instanceParameter;
-		instValues._color.setValueToArg( instanceParameter.AllColor );
+		instanceParameter.AllColor = instValues._color;
 
 		instanceParameter.SRTMatrix43 = instance.GetGlobalMatrix43();
 
-		// Inherit color
-		color _color;
+		// Inherit Color
+		Color _color;
 		if (RendererCommon.ColorBindType == BindType::Always || RendererCommon.ColorBindType == BindType::WhenCreating)
 		{
-			_color = color::mul(instValues._originalColor, instance.ColorParent);
+			_color = Color::Mul(instValues._originalColor, instance.ColorParent);
 		}
 		else
 		{
 			_color = instValues._originalColor;
 		}
 
-		color color_ll = _color;
-		color color_lr = _color;
-		color color_ul = _color;
-		color color_ur = _color;
+		Color color_ll = _color;
+		Color color_lr = _color;
+		Color color_ul = _color;
+		Color color_ur = _color;
 
 		if( SpriteColor.type == SpriteColorParameter::Default )
 		{
 		}
 		else if( SpriteColor.type == SpriteColorParameter::Fixed )
 		{
-			color_ll = color::mul( color_ll, SpriteColor.fixed.ll );
-			color_lr = color::mul( color_lr, SpriteColor.fixed.lr );
-			color_ul = color::mul( color_ul, SpriteColor.fixed.ul );
-			color_ur = color::mul( color_ur, SpriteColor.fixed.ur );
+			color_ll = Color::Mul( color_ll, SpriteColor.fixed.ll );
+			color_lr = Color::Mul( color_lr, SpriteColor.fixed.lr );
+			color_ul = Color::Mul( color_ul, SpriteColor.fixed.ul );
+			color_ur = Color::Mul( color_ur, SpriteColor.fixed.ur );
 		}
 
-		color_ll.setValueToArg( instanceParameter.Colors[0] );
-		color_lr.setValueToArg( instanceParameter.Colors[1] );
-		color_ul.setValueToArg( instanceParameter.Colors[2] );
-		color_ur.setValueToArg( instanceParameter.Colors[3] );
+		instanceParameter.Colors[0] = color_ll;
+		instanceParameter.Colors[1] = color_lr;
+		instanceParameter.Colors[2] = color_ul;
+		instanceParameter.Colors[3] = color_ur;
 		
-		// Apply global color
+		// Apply global Color
 		if (instance.m_pContainer->GetRootInstance()->IsGlobalColorSet)
 		{
-			Color::Mul(instanceParameter.Colors[0], instanceParameter.Colors[0], instance.m_pContainer->GetRootInstance()->GlobalColor);
-			Color::Mul(instanceParameter.Colors[1], instanceParameter.Colors[1], instance.m_pContainer->GetRootInstance()->GlobalColor);
-			Color::Mul(instanceParameter.Colors[2], instanceParameter.Colors[2], instance.m_pContainer->GetRootInstance()->GlobalColor);
-			Color::Mul(instanceParameter.Colors[3], instanceParameter.Colors[3], instance.m_pContainer->GetRootInstance()->GlobalColor);
+			instanceParameter.Colors[0] = Color::Mul(instanceParameter.Colors[0], instance.m_pContainer->GetRootInstance()->GlobalColor);
+			instanceParameter.Colors[1] = Color::Mul(instanceParameter.Colors[1], instance.m_pContainer->GetRootInstance()->GlobalColor);
+			instanceParameter.Colors[2] = Color::Mul(instanceParameter.Colors[2], instance.m_pContainer->GetRootInstance()->GlobalColor);
+			instanceParameter.Colors[3] = Color::Mul(instanceParameter.Colors[3], instance.m_pContainer->GetRootInstance()->GlobalColor);
 		}
 
 		if( SpritePosition.type == SpritePosition.Default )
@@ -11573,15 +11621,15 @@ void EffectNodeSprite::InitializeRenderedInstance(Instance& instance, Manager* m
 		instValues.allColorValues.fcurve_rgba.offset[2] = SpriteAllColor.fcurve_rgba.FCurve->B.GetOffset(*instanceGlobal);
 		instValues.allColorValues.fcurve_rgba.offset[3] = SpriteAllColor.fcurve_rgba.FCurve->A.GetOffset(*instanceGlobal);
 		
-		instValues._originalColor.r = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[0] + SpriteAllColor.fcurve_rgba.FCurve->R.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
-		instValues._originalColor.g = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[1] + SpriteAllColor.fcurve_rgba.FCurve->G.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
-		instValues._originalColor.b = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[2] + SpriteAllColor.fcurve_rgba.FCurve->B.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
-		instValues._originalColor.a = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[3] + SpriteAllColor.fcurve_rgba.FCurve->A.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
+		instValues._originalColor.R = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[0] + SpriteAllColor.fcurve_rgba.FCurve->R.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
+		instValues._originalColor.G = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[1] + SpriteAllColor.fcurve_rgba.FCurve->G.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
+		instValues._originalColor.B = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[2] + SpriteAllColor.fcurve_rgba.FCurve->B.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
+		instValues._originalColor.A = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[3] + SpriteAllColor.fcurve_rgba.FCurve->A.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
 	}
 
 	if (RendererCommon.ColorBindType == BindType::Always || RendererCommon.ColorBindType == BindType::WhenCreating)
 	{
-		instValues._color = color::mul(instValues._originalColor, instance.ColorParent);
+		instValues._color = Color::Mul(instValues._originalColor, instance.ColorParent);
 	}
 	else
 	{
@@ -11618,21 +11666,21 @@ void EffectNodeSprite::UpdateRenderedInstance(Instance& instance, Manager* manag
 	}
 	else if( SpriteAllColor.type == StandardColorParameter::FCurve_RGBA )
 	{
-		instValues._originalColor.r = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[0] + SpriteAllColor.fcurve_rgba.FCurve->R.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
-		instValues._originalColor.g = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[1] + SpriteAllColor.fcurve_rgba.FCurve->G.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
-		instValues._originalColor.b = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[2] + SpriteAllColor.fcurve_rgba.FCurve->B.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
-		instValues._originalColor.a = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[3] + SpriteAllColor.fcurve_rgba.FCurve->A.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
+		instValues._originalColor.R = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[0] + SpriteAllColor.fcurve_rgba.FCurve->R.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
+		instValues._originalColor.G = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[1] + SpriteAllColor.fcurve_rgba.FCurve->G.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
+		instValues._originalColor.B = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[2] + SpriteAllColor.fcurve_rgba.FCurve->B.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
+		instValues._originalColor.A = (uint8_t)Clamp( (instValues.allColorValues.fcurve_rgba.offset[3] + SpriteAllColor.fcurve_rgba.FCurve->A.GetValue( (int32_t)instance.m_LivingTime )), 255, 0);
 	}
 
 	float fadeAlpha = GetFadeAlpha(instance);
 	if (fadeAlpha != 1.0f)
 	{
-		instValues._originalColor.a = (uint8_t)(instValues._originalColor.a * fadeAlpha);
+		instValues._originalColor.A = (uint8_t)(instValues._originalColor.A * fadeAlpha);
 	}
 
 	if (RendererCommon.ColorBindType == BindType::Always || RendererCommon.ColorBindType == BindType::WhenCreating)
 	{
-		instValues._color = color::mul(instValues._originalColor, instance.ColorParent);
+		instValues._color = Color::Mul(instValues._originalColor, instance.ColorParent);
 	}
 	else
 	{
@@ -11862,18 +11910,12 @@ void EffectNodeTrack::InitializeRenderedInstance(Instance& instance, Manager* ma
 	Color c;
 	SetValues(c, instance, m_currentGroupValues.ColorCenterMiddle, TrackColorCenterMiddle, time, livedTime);
 
-	color _c;
-	_c.r = c.R;
-	_c.g = c.G;
-	_c.b = c.B;
-	_c.a = c.A;
-
 	if (RendererCommon.ColorBindType == BindType::Always || RendererCommon.ColorBindType == BindType::WhenCreating)
 	{
-		_c = color::mul(_c, instance.ColorParent);
+		c = Color::Mul(c, instance.ColorParent);
 	}
 
-	instance.ColorInheritance = _c;
+	instance.ColorInheritance = c;
 }
 
 //----------------------------------------------------------------------------------
@@ -11891,13 +11933,7 @@ void EffectNodeTrack::UpdateRenderedInstance(Instance& instance, Manager* manage
 	Color c;
 	SetValues(c, instance, m_currentGroupValues.ColorCenterMiddle, TrackColorCenterMiddle, time, livedTime);
 
-	color _c;
-	_c.r = c.R;
-	_c.g = c.G;
-	_c.b = c.B;
-	_c.a = c.A;
-
-	instance.ColorInheritance = _c;
+	instance.ColorInheritance = c;
 }
 
 //----------------------------------------------------------------------------------
@@ -11943,50 +11979,46 @@ void EffectNodeTrack::InitializeValues(InstanceGroupValues::Size& value, TrackSi
 //----------------------------------------------------------------------------------
 void EffectNodeTrack::SetValues(Color& c, const Instance& instance, InstanceGroupValues::Color& value, StandardColorParameter& param, int32_t time, int32_t livedTime)
 {
-	color _c;
-
 	if( param.type == StandardColorParameter::Fixed )
 	{
-		_c = value.color.fixed.color_;
+		c = value.color.fixed.color_;
 	}
 	else if(param.type == StandardColorParameter::Random )
 	{
-		_c = value.color.random.color_;
+		c = value.color.random.color_;
 	}
 	else if( param.type == StandardColorParameter::Easing )
 	{
 		float t = (float)time / (float)livedTime;
 		param.easing.all.setValueToArg(
-			_c, 
+			c, 
 			value.color.easing.start,
 			value.color.easing.end,
 			t );
 	}
 	else if( param.type == StandardColorParameter::FCurve_RGBA )
 	{
-		_c.r = (uint8_t)Clamp( (value.color.fcurve_rgba.offset[0] + param.fcurve_rgba.FCurve->R.GetValue( (int32_t)time )), 255, 0);
-		_c.g = (uint8_t)Clamp( (value.color.fcurve_rgba.offset[1] + param.fcurve_rgba.FCurve->G.GetValue( (int32_t)time )), 255, 0);
-		_c.b = (uint8_t)Clamp( (value.color.fcurve_rgba.offset[2] + param.fcurve_rgba.FCurve->B.GetValue( (int32_t)time )), 255, 0);
-		_c.a = (uint8_t)Clamp( (value.color.fcurve_rgba.offset[3] + param.fcurve_rgba.FCurve->A.GetValue( (int32_t)time )), 255, 0);
+		c.R = (uint8_t)Clamp( (value.color.fcurve_rgba.offset[0] + param.fcurve_rgba.FCurve->R.GetValue( (int32_t)time )), 255, 0);
+		c.G = (uint8_t)Clamp( (value.color.fcurve_rgba.offset[1] + param.fcurve_rgba.FCurve->G.GetValue( (int32_t)time )), 255, 0);
+		c.B = (uint8_t)Clamp( (value.color.fcurve_rgba.offset[2] + param.fcurve_rgba.FCurve->B.GetValue( (int32_t)time )), 255, 0);
+		c.A = (uint8_t)Clamp( (value.color.fcurve_rgba.offset[3] + param.fcurve_rgba.FCurve->A.GetValue( (int32_t)time )), 255, 0);
 	}
 
 	if (RendererCommon.ColorBindType == BindType::Always || RendererCommon.ColorBindType == BindType::WhenCreating)
 	{
-		_c = color::mul(_c, instance.ColorParent);
+		c = Color::Mul(c, instance.ColorParent);
 	}
 
 	float fadeAlpha = GetFadeAlpha(instance);
 	if (fadeAlpha != 1.0f)
 	{
-		_c.a = (uint8_t)(_c.a * fadeAlpha);
+		c.A = (uint8_t)(c.A * fadeAlpha);
 	}
 
-	_c.setValueToArg(c);
-
-	// Apply global color
+	// Apply global Color
 	if (instance.m_pContainer->GetRootInstance()->IsGlobalColorSet)
 	{
-		Color::Mul(c, c, instance.m_pContainer->GetRootInstance()->GlobalColor);
+		c = Color::Mul(c, instance.m_pContainer->GetRootInstance()->GlobalColor);
 	}
 }
 
@@ -15071,15 +15103,8 @@ Instance::Instance(Manager* pManager, EffectNode* pEffectNode, InstanceContainer
 	m_generatedChildrenCount = m_fixedGeneratedChildrenCount;
 	m_nextGenerationTime = m_fixedNextGenerationTime;
 	
-	ColorInheritance.r = 255;
-	ColorInheritance.g = 255;
-	ColorInheritance.b = 255;
-	ColorInheritance.a = 255;
-
-	ColorParent.r = 255;
-	ColorParent.g = 255;
-	ColorParent.b = 255;
-	ColorParent.a = 255;
+	ColorInheritance = Color(255, 255, 255, 255);
+	ColorParent = Color(255, 255, 255, 255);
 
 	InstanceGroup* group = NULL;
 
