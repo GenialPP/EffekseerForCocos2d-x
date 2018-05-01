@@ -551,6 +551,8 @@ namespace GLExt
 #define GL_MAP_FLUSH_EXPLICIT_BIT 0x0010
 #define GL_MAP_UNSYNCHRONIZED_BIT 0x0020
 
+#define GL_WRITE_ONLY 0x000088b9
+
 #if defined(__APPLE__) || defined(__ANDROID__)
 #else
 typedef ptrdiff_t GLsizeiptr;
@@ -561,6 +563,7 @@ typedef char GLchar;
 bool Initialize(OpenGLDeviceType deviceType);
 bool IsSupportedVertexArray();
 bool IsSupportedBufferRange();
+bool IsSupportedMapBuffer();
 
 void glDeleteBuffers(GLsizei n, const GLuint* buffers);
 GLuint glCreateShader(GLenum type);
@@ -603,7 +606,7 @@ void glDeleteSamplers(GLsizei n, const GLuint * samplers);
 void glSamplerParameteri(GLuint sampler, GLenum pname, GLint param);
 void glBindSampler(GLuint unit, GLuint sampler);
 
-
+void* glMapBuffer(GLenum target, GLenum access);
 void* glMapBufferRange(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access);
 GLboolean glUnmapBuffer(GLenum target);
 
@@ -1757,7 +1760,11 @@ class VertexBuffer
 	, public ::EffekseerRenderer::VertexBufferBase
 {
 private:
-	GLuint					m_buffer;
+	bool					nBufferingMode = false;
+	int32_t					bufferingIndex = 0;
+	int32_t					bufferingCount = 0;
+
+	GLuint					m_buffers[3];
 
 	uint32_t				m_vertexRingStart;
 	uint32_t				m_vertexRingOffset;
@@ -1769,7 +1776,7 @@ public:
 
 	static VertexBuffer* Create( RendererImplemented* renderer, int size, bool isDynamic );
 
-	GLuint GetInterface() { return m_buffer; }
+	GLuint GetInterface();
 
 public:	// デバイス復旧用
 	virtual void OnLostDevice();
@@ -1783,6 +1790,8 @@ public:
 	void Unlock();
 
 	bool IsValid();
+
+	bool IsNBufferingMode() const { return nBufferingMode; }
 };
 
 //-----------------------------------------------------------------------------------
@@ -1912,6 +1921,7 @@ typedef void (EFK_STDCALL * FP_glDeleteSamplers) (GLsizei n, const GLuint * samp
 typedef void (EFK_STDCALL * FP_glSamplerParameteri) (GLuint sampler, GLenum pname, GLint param);
 typedef void (EFK_STDCALL * FP_glBindSampler) (GLuint unit, GLuint sampler);
 
+typedef void* (EFK_STDCALL *FP_glMapBuffer)(GLenum target, GLenum access);
 typedef void* (EFK_STDCALL *FP_glMapBufferRange)(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access);
 typedef GLboolean(EFK_STDCALL *FP_glUnmapBuffer)(GLenum target);
 
@@ -1956,6 +1966,7 @@ static FP_glDeleteSamplers g_glDeleteSamplers = nullptr;
 static FP_glSamplerParameteri g_glSamplerParameteri = nullptr;
 static FP_glBindSampler g_glBindSampler = nullptr;
 
+static FP_glMapBuffer g_glMapBuffer = NULL;
 static FP_glMapBufferRange g_glMapBufferRange = NULL;
 static FP_glUnmapBuffer g_glUnmapBuffer = NULL;
 
@@ -1967,14 +1978,16 @@ typedef void (* FP_glGenVertexArraysOES) (GLsizei n, GLuint *arrays);
 typedef void (* FP_glDeleteVertexArraysOES) (GLsizei n, const GLuint *arrays);
 typedef void (* FP_glBindVertexArrayOES) (GLuint array);
 
-typedef void* (* FP_glMapBufferRangeOES)(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access);
+typedef void* (* FP_glMapBufferOES)(GLenum target, GLenum access);
+typedef void* (* FP_glMapBufferRangeEXT)(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access);
 typedef GLboolean (* FP_glUnmapBufferOES)(GLenum target);
 
 static FP_glGenVertexArraysOES g_glGenVertexArraysOES = NULL;
 static FP_glDeleteVertexArraysOES g_glDeleteVertexArraysOES = NULL;
 static FP_glBindVertexArrayOES g_glBindVertexArrayOES = NULL;
 
-static FP_glMapBufferRangeOES g_glMapBufferRangeOES = NULL;
+static FP_glMapBufferOES g_glMapBufferOES = NULL;
+static FP_glMapBufferRangeEXT g_glMapBufferRangeEXT = NULL;
 static FP_glUnmapBufferOES g_glUnmapBufferOES = NULL;
 
 #endif
@@ -1982,6 +1995,7 @@ static FP_glUnmapBufferOES g_glUnmapBufferOES = NULL;
 static bool g_isInitialized = false;
 static bool g_isSupportedVertexArray = false;
 static bool g_isSurrpotedBufferRange = false;
+static bool g_isSurrpotedMapBuffer = false;
 
 #if _WIN32
 #define GET_PROC(name)	g_##name = (FP_##name)wglGetProcAddress( #name ); if(g_##name==NULL) return false;
@@ -2042,6 +2056,7 @@ bool Initialize(OpenGLDeviceType deviceType)
 	GET_PROC(glSamplerParameteri);
 	GET_PROC(glBindSampler);
 
+	GET_PROC(glMapBuffer);
 	GET_PROC(glMapBufferRange);
 	GET_PROC(glUnmapBuffer);
 
@@ -2049,6 +2064,8 @@ bool Initialize(OpenGLDeviceType deviceType)
 
 	g_isSupportedVertexArray = (g_glGenVertexArrays && g_glDeleteVertexArrays && g_glBindVertexArray);
 	g_isSurrpotedBufferRange = (g_glMapBufferRange && g_glUnmapBuffer);
+	g_isSurrpotedMapBuffer = (g_glMapBuffer && g_glUnmapBuffer);
+
 #endif
 
 #if defined(__EFFEKSEER_RENDERER_GLES2__)
@@ -2059,18 +2076,24 @@ bool Initialize(OpenGLDeviceType deviceType)
 	g_glBindVertexArrayOES = ::glBindVertexArrayOES;
 	g_isSupportedVertexArray = true;
 
-	g_glMapBufferRangeOES = ::glMapBufferRangeEXT;
+	g_glUnmapBuffer = ::glUnmapBuffer;
+	g_glMapBufferRangeEXT = ::glMapBufferRangeEXT;
 	g_glUnmapBufferOES = ::glUnmapBufferOES;
 	g_isSurrpotedBufferRange = true;
+	g_isSurrpotedMapBuffer = true;
 #else
 	GET_PROC(glGenVertexArraysOES);
 	GET_PROC(glDeleteVertexArraysOES);
 	GET_PROC(glBindVertexArrayOES);
 	g_isSupportedVertexArray = (g_glGenVertexArraysOES && g_glDeleteVertexArraysOES && g_glBindVertexArrayOES);
 
-	GET_PROC(glMapBufferRangeOES);
+	// Some smartphone causes segmentation fault.
+	//GET_PROC(glMapBufferRangeEXT);
+
+	GET_PROC(glMapBufferOES);
 	GET_PROC(glUnmapBufferOES);
-	g_isSurrpotedBufferRange = (g_glMapBufferRangeOES && g_glUnmapBufferOES);
+	g_isSurrpotedBufferRange = (g_glMapBufferRangeEXT && g_glUnmapBufferOES);
+	g_isSurrpotedMapBuffer = (g_glMapBufferOES && g_glUnmapBufferOES);
 #endif
 
 #else
@@ -2078,6 +2101,8 @@ bool Initialize(OpenGLDeviceType deviceType)
 		deviceType == OpenGLDeviceType::OpenGLES3)
 	{
 		g_isSupportedVertexArray = true;
+		g_isSurrpotedBufferRange = true;
+		g_isSurrpotedMapBuffer = true;
 	}
 #endif
 
@@ -2093,6 +2118,11 @@ bool IsSupportedVertexArray()
 bool IsSupportedBufferRange()
 {
 	return g_isSurrpotedBufferRange;
+}
+
+bool IsSupportedMapBuffer()
+{
+	return g_isSurrpotedMapBuffer;
 }
 
 void glDeleteBuffers(GLsizei n, const GLuint* buffers)
@@ -2447,12 +2477,23 @@ void glBindSampler(GLuint unit, GLuint sampler)
 #endif
 }
 
+void* glMapBuffer(GLenum target, GLenum access)
+{
+#if _WIN32
+	return g_glMapBuffer(target, access);
+#elif defined(__EFFEKSEER_RENDERER_GLES2__)
+	return g_glMapBufferOES(target, access);
+#else
+	return ::glMapBuffer(target, access);
+#endif
+}
+
 void* glMapBufferRange(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access)
 {
 #if _WIN32
 	return g_glMapBufferRange(target, offset, length, access);
 #elif defined(__EFFEKSEER_RENDERER_GLES2__)
-	return g_glMapBufferRangeOES(target, offset, length, access);
+	return g_glMapBufferRangeEXT(target, offset, length, access);
 #else
 	return ::glMapBufferRange(target, offset, length, access);
 #endif
@@ -4521,7 +4562,9 @@ void RendererImplemented::SetDistortingCallback(EffekseerRenderer::DistortingCal
 //----------------------------------------------------------------------------------
 void RendererImplemented::SetVertexBuffer( VertexBuffer* vertexBuffer, int32_t size )
 {
-	if (m_currentVertexArray == nullptr || m_currentVertexArray->GetVertexBuffer() == nullptr)
+	if (m_currentVertexArray == nullptr ||
+		m_currentVertexArray->GetVertexBuffer() == nullptr ||
+		m_currentVertexArray->GetVertexBuffer()->IsNBufferingMode())
 	{
 		GLExt::glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer->GetInterface());
 	}
@@ -4575,7 +4618,9 @@ void RendererImplemented::SetLayout(Shader* shader)
 {
 	GLCheckError();
 	
-	if (m_currentVertexArray == nullptr || m_currentVertexArray->GetVertexBuffer() == nullptr)
+	if (m_currentVertexArray == nullptr || 
+		m_currentVertexArray->GetVertexBuffer() == nullptr ||
+		m_currentVertexArray->GetVertexBuffer()->IsNBufferingMode())
 	{
 		shader->EnableAttribs();
 		shader->SetVertex();
@@ -6051,10 +6096,28 @@ VertexBuffer::VertexBuffer( RendererImplemented* renderer, int size, bool isDyna
 	m_resource = new uint8_t[m_size];
 	memset(m_resource, 0, (size_t)m_size);
 
-	GLExt::glGenBuffers(1, &m_buffer);
-	GLExt::glBindBuffer(GL_ARRAY_BUFFER, m_buffer);
-	GLExt::glBufferData(GL_ARRAY_BUFFER, m_size, m_resource, GL_STREAM_DRAW);
-	GLExt::glBindBuffer(GL_ARRAY_BUFFER, 0);
+	// it is for android opengl ES2.0 mainly
+	nBufferingMode = !GLExt::IsSupportedBufferRange() && GLExt::IsSupportedMapBuffer();
+
+	if (nBufferingMode)
+	{
+		bufferingCount = 3;
+		GLExt::glGenBuffers(bufferingCount, m_buffers);
+
+		for (int32_t i = 0; i < bufferingCount; i++)
+		{
+			GLExt::glBindBuffer(GL_ARRAY_BUFFER, m_buffers[i]);
+			GLExt::glBufferData(GL_ARRAY_BUFFER, m_size, m_resource, GL_STREAM_DRAW);
+			GLExt::glBindBuffer(GL_ARRAY_BUFFER, 0);
+		}
+	}
+	else
+	{
+		GLExt::glGenBuffers(1, &m_buffers[0]);
+		GLExt::glBindBuffer(GL_ARRAY_BUFFER, m_buffers[0]);
+		GLExt::glBufferData(GL_ARRAY_BUFFER, m_size, m_resource, GL_STREAM_DRAW);
+		GLExt::glBindBuffer(GL_ARRAY_BUFFER, 0);
+	}
 }
 
 //-----------------------------------------------------------------------------------
@@ -6062,7 +6125,15 @@ VertexBuffer::VertexBuffer( RendererImplemented* renderer, int size, bool isDyna
 //-----------------------------------------------------------------------------------
 VertexBuffer::~VertexBuffer()
 {
-	GLExt::glDeleteBuffers(1, &m_buffer);
+	if (nBufferingMode)
+	{
+		GLExt::glDeleteBuffers(bufferingCount, m_buffers);
+	}
+	else
+	{
+		GLExt::glDeleteBuffers(1, &m_buffers[0]);
+	}
+
 	delete [] m_resource;
 }
 
@@ -6074,13 +6145,30 @@ VertexBuffer* VertexBuffer::Create( RendererImplemented* renderer, int size, boo
 	return new VertexBuffer( renderer, size, isDynamic );
 }
 
+GLuint VertexBuffer::GetInterface()
+{
+	return m_buffers[bufferingIndex];
+}
+
 //-----------------------------------------------------------------------------------
 //
 //-----------------------------------------------------------------------------------
 void VertexBuffer::OnLostDevice()
 {
-	GLExt::glDeleteBuffers(1, &m_buffer);
-	m_buffer = 0;
+	if (nBufferingMode)
+	{
+		GLExt::glDeleteBuffers(bufferingCount, m_buffers);
+
+		for (int32_t i = 0; i < bufferingCount; i++)
+		{
+			m_buffers[i] = 0;
+		}
+	}
+	else
+	{
+		GLExt::glDeleteBuffers(1, &m_buffers[0]);
+		m_buffers[0] = 0;
+	}
 }
 
 //-----------------------------------------------------------------------------------
@@ -6090,10 +6178,25 @@ void VertexBuffer::OnResetDevice()
 {
 	if (IsValid()) return;
 
-	GLExt::glGenBuffers(1, &m_buffer);
-	GLExt::glBindBuffer(GL_ARRAY_BUFFER, m_buffer);
-	GLExt::glBufferData(GL_ARRAY_BUFFER, m_size, m_resource, GL_STREAM_DRAW);
-	GLExt::glBindBuffer(GL_ARRAY_BUFFER, 0);
+	if (nBufferingMode)
+	{
+		bufferingCount = 3;
+		GLExt::glGenBuffers(bufferingCount, m_buffers);
+
+		for (int32_t i = 0; i < bufferingCount; i++)
+		{
+			GLExt::glBindBuffer(GL_ARRAY_BUFFER, m_buffers[i]);
+			GLExt::glBufferData(GL_ARRAY_BUFFER, m_size, m_resource, GL_STREAM_DRAW);
+			GLExt::glBindBuffer(GL_ARRAY_BUFFER, 0);
+		}
+	}
+	else
+	{
+		GLExt::glGenBuffers(1, &m_buffers[0]);
+		GLExt::glBindBuffer(GL_ARRAY_BUFFER, m_buffers[0]);
+		GLExt::glBufferData(GL_ARRAY_BUFFER, m_size, m_resource, GL_STREAM_DRAW);
+		GLExt::glBindBuffer(GL_ARRAY_BUFFER, 0);
+	}
 }
 
 //-----------------------------------------------------------------------------------
@@ -6159,7 +6262,14 @@ void VertexBuffer::Unlock()
 {
 	assert( m_isLock || m_ringBufferLock );
 
-	GLExt::glBindBuffer(GL_ARRAY_BUFFER, m_buffer);
+	if (nBufferingMode)
+	{
+		bufferingIndex++;
+		bufferingIndex = bufferingIndex % bufferingCount;
+	}
+
+	GLExt::glBindBuffer(GL_ARRAY_BUFFER, m_buffers[bufferingIndex]);
+
 
 	if (GLExt::IsSupportedBufferRange() && m_vertexRingOffset > 0)
 	{
@@ -6169,7 +6279,16 @@ void VertexBuffer::Unlock()
 	}
 	else
 	{
-		GLExt::glBufferSubData(GL_ARRAY_BUFFER, m_vertexRingStart, m_offset, m_resource);
+		if (nBufferingMode)
+		{
+			auto target = (uint8_t*)GLExt::glMapBuffer(GL_ARRAY_BUFFER, GL_WRITE_ONLY);
+			memcpy(target + m_vertexRingStart, m_resource, m_offset);
+			GLExt::glUnmapBuffer(GL_ARRAY_BUFFER);
+		}
+		else
+		{
+			GLExt::glBufferSubData(GL_ARRAY_BUFFER, m_vertexRingStart, m_offset, m_resource);
+		}
 	}
 
 	GLExt::glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -6180,7 +6299,14 @@ void VertexBuffer::Unlock()
 
 bool VertexBuffer::IsValid()
 {
-	return m_buffer != 0;
+	if (nBufferingMode)
+	{
+		return m_buffers[bufferingIndex] != 0;
+	}
+	else
+	{
+		return m_buffers[0] != 0;
+	}
 }
 
 //-----------------------------------------------------------------------------------

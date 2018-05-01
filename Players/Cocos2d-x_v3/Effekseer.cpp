@@ -621,9 +621,21 @@ namespace efk
 	bool EffectManager::Initialize(cocos2d::Size visibleSize, int maxSpriteCount)
 	{
 #if (CC_TARGET_PLATFORM == CC_PLATFORM_IOS || CC_TARGET_PLATFORM == CC_PLATFORM_ANDROID)
+
+#ifdef __EFFEKSEER_RENDERER_GLES2__
 		renderer2d = ::EffekseerRendererGL::Renderer::Create(maxSpriteCount, EffekseerRendererGL::OpenGLDeviceType::OpenGLES2);
 #else
+		renderer2d = ::EffekseerRendererGL::Renderer::Create(maxSpriteCount, EffekseerRendererGL::OpenGLDeviceType::OpenGLES3);
+#endif
+
+#else
+
+#ifdef __EFFEKSEER_RENDERER_GL2__
 		renderer2d = ::EffekseerRendererGL::Renderer::Create(maxSpriteCount, EffekseerRendererGL::OpenGLDeviceType::OpenGL2);
+#else
+		renderer2d = ::EffekseerRendererGL::Renderer::Create(maxSpriteCount, EffekseerRendererGL::OpenGLDeviceType::OpenGL3);
+#endif
+
 #endif
 		
 		manager2d = ::Effekseer::Manager::Create(maxSpriteCount);
