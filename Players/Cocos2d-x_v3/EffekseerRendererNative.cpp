@@ -1157,6 +1157,8 @@ private:
 	Shader*							m_shader_distortion;
 	Shader*							m_shader_no_texture_distortion;
 
+	Shader*		currentShader = nullptr;
+
 	EffekseerRenderer::StandardRenderer<RendererImplemented, Shader, Vertex, VertexDistortion>*	m_standardRenderer;
 
 	VertexArray*			m_vao;
@@ -1384,6 +1386,10 @@ public:
 	Shader* GetShader(bool useTexture, bool useDistortion) const;
 	void BeginShader(Shader* shader);
 	void EndShader(Shader* shader);
+
+	void SetVertexBufferToShader(const void* data, int32_t size);
+
+	void SetPixelBufferToShader(const void* data, int32_t size);
 
 	void SetTextures(Shader* shader, Effekseer::TextureData** textures, int32_t count);
 
@@ -4730,6 +4736,9 @@ void RendererImplemented::BeginShader(Shader* shader)
 		GLExt::glBindVertexArray(m_currentVertexArray->GetInterface());
 	}
 
+	assert(currentShader == nullptr);
+	currentShader = shader;
+
 	GLCheckError();
 }
 
@@ -4738,6 +4747,9 @@ void RendererImplemented::BeginShader(Shader* shader)
 //----------------------------------------------------------------------------------
 void RendererImplemented::EndShader(Shader* shader)
 {
+	assert(currentShader == shader);
+	currentShader = nullptr;
+
 	GLCheckError();
 	
 	if (m_currentVertexArray)
@@ -4774,9 +4786,18 @@ void RendererImplemented::EndShader(Shader* shader)
 	GLCheckError();
 }
 
-//----------------------------------------------------------------------------------
-//
-//----------------------------------------------------------------------------------
+void RendererImplemented::SetVertexBufferToShader(const void* data, int32_t size)
+{
+	assert(currentShader != nullptr);
+	memcpy(currentShader->GetVertexConstantBuffer(), data, size);
+}
+
+void RendererImplemented::SetPixelBufferToShader(const void* data, int32_t size)
+{
+	assert(currentShader != nullptr);
+	memcpy(currentShader->GetPixelConstantBuffer(), data, size);
+}
+
 void RendererImplemented::SetTextures(Shader* shader, Effekseer::TextureData** textures, int32_t count)
 {
 	GLCheckError();
